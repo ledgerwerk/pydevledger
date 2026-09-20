@@ -1,0 +1,18 @@
+schema_version = 3
+
+[project]
+uuid = "e54ea40a-a065-4414-9564-ce8831bb8b4b"
+name = "pydevledger"
+
+[ledgers.taskledger.mounts.data]
+storage = "external"
+root = "../ledger"
+
+[ledgers.taskledger.mounts.runtime]
+storage = "user-data"
+
+[ledgers.taskledger.mounts.logs]
+storage = "user-data"
+
+[ledgers.taskledger.mounts.indexes]
+storage = "cache"

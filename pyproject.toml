@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=80", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pydevledger"
+dynamic = ["version"]
+description = "Track local Python projects, virtualenv provenance, and upstream dependency releases."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "packaging>=24.2",
+]
+
+[project.scripts]
+pydevledger = "pydevledger.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pydevledger*"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
