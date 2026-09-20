@@ -8,7 +8,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
-from .types import InstalledDistribution
+from .types import InstalledDistribution, Project
 
 _INSPECT_SCRIPT = r'''
 import importlib.metadata as md
@@ -35,23 +35,45 @@ print(json.dumps(rows))
 '''
 
 
-def resolve_python(explicit: Path | None = None) -> Path:
+def venv_python(path: Path) -> Path | None:
+    path = path.expanduser()
+    if path.is_file():
+        return path.resolve()
+    if not path.is_dir():
+        return None
+    relative = Path("Scripts/python.exe") if os.name == "nt" else Path("bin/python")
+    candidate = path / relative
+    return candidate.resolve() if candidate.is_file() else None
+
+
+def resolve_python(explicit: Path | None = None, *, root: Path | None = None) -> Path:
     if explicit is not None:
-        return explicit.expanduser().resolve()
+        candidate = venv_python(explicit)
+        if candidate is None:
+            raise RuntimeError(f"Python interpreter does not exist: {explicit.expanduser()}")
+        return candidate
 
     active = os.environ.get("VIRTUAL_ENV")
     if active:
-        if os.name == "nt":
-            candidate = Path(active) / "Scripts" / "python.exe"
-        else:
-            candidate = Path(active) / "bin" / "python"
-        if candidate.is_file():
-            return candidate.resolve()
+        candidate = venv_python(Path(active))
+        if candidate is not None:
+            return candidate
 
-    return Path(sys.executable).resolve()
+    if root is not None:
+        candidate = venv_python(root.expanduser().resolve() / ".venv")
+        if candidate is not None:
+            return candidate
+
+    candidate = Path(sys.executable).resolve()
+    if not candidate.is_file():
+        raise RuntimeError(f"Python interpreter does not exist: {candidate}")
+    return candidate
 
 
 def inspect_environment(python: Path) -> dict[str, InstalledDistribution]:
+    python = python.expanduser().resolve()
+    if not python.is_file():
+        raise RuntimeError(f"Python interpreter does not exist: {python}")
     result = subprocess.run(
         [str(python), "-c", _INSPECT_SCRIPT],
         check=False,
@@ -63,8 +85,13 @@ def inspect_environment(python: Path) -> dict[str, InstalledDistribution]:
             f"Cannot inspect environment with {python}: {result.stderr.strip()}"
         )
 
+    try:
+        rows = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Cannot inspect environment with {python}: invalid JSON") from exc
+
     installed: dict[str, InstalledDistribution] = {}
-    for row in json.loads(result.stdout):
+    for row in rows:
         source = None
         editable = False
         direct = row.get("direct_url")
@@ -87,3 +114,16 @@ def inspect_environment(python: Path) -> dict[str, InstalledDistribution]:
         )
 
     return installed
+
+
+def classify_project_install(
+    project: Project,
+    distribution: InstalledDistribution | None,
+) -> str:
+    if distribution is None:
+        return "MISSING"
+    if distribution.source is None:
+        return "NON-LOCAL"
+    if distribution.source != project.path.resolve():
+        return "WRONG-SOURCE"
+    return "OK" if distribution.editable else "LOCAL-NONEDIT"

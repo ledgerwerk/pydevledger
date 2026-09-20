@@ -1,79 +1,93 @@
 # pydevledger
 
-`pydevledger` is an MVP for keeping a Python development environment aligned with a set of checked-out Git repositories.
+`pydevledger` keeps one Python development environment aligned with a set of checked-out Git Python projects. It discovers installable projects, verifies editable-install provenance, installs selected checkouts with uv, maps dependency consumers, and reports newly published dependency releases.
 
-It answers four questions:
+The workspace is a parent directory of independent Git repositories; it does not need to be a Python or uv workspace itself.
 
-1. Which Git checkouts below this directory contain installable `pyproject.toml` projects?
-2. Which of those projects are installed in this Python environment, and are they editable from the expected checkout?
-3. Which local projects depend on a given package?
-4. Which direct dependencies have newer releases on PyPI, and which releases still satisfy the declared constraints?
+## Development
 
-It deliberately does **not** resolve dependencies itself. `uv` remains the installer/resolver.
-
-## Layout
-
-There is intentionally no `src/` layer:
-
-```text
-pydevledger/
-  __init__.py
-  cli.py
-  discovery.py
-  environment.py
-  releases.py
-  state.py
-  types.py
-tests/
-pyproject.toml
-```
-
-## Dynamic versioning
-
-Versions come from Git tags through `setuptools-scm`.
+The repository uses uv for its own development workflow:
 
 ```bash
-git init
-git add .
-git commit -m "Initial MVP"
-git tag v0.1.0
-python -m pip install -e .
-pydevledger --version
+uv sync --dev
+uv run pytest
+uv build
 ```
 
-A source tree without Git metadata falls back to `0.0.0`, which keeps unpacked archives installable.
+The package keeps a flat layout (there is no `src/` directory) and uses dynamic versions from Git tags through `setuptools-scm`.
 
-## Quick start
+## Workspace configuration
+
+Configuration is optional. Without an explicit `--config`, pydevledger reads only `<root>/.pydevledger.toml` when that file exists. It never searches above `--root`.
+
+```toml
+schema_version = 1
+
+[package_manager]
+system = "uv"
+
+[package_manager.uv]
+link_mode = "copy"
+
+[discovery]
+exclude_names = [".tox", "generated"]
+exclude_paths = [
+  "archive",
+  "clients/acme/retired-service",
+]
+include_hidden = false
+```
+
+The selected package-management system is workspace policy. With `system = "uv"`, environment mutation and verification use only uv; pydevledger does not silently fall back to pip, Poetry, or another manager. The `uv pip ...` form is a uv command, not a direct invocation of pip.
+
+Built-in exclusions (`.git`, `.venv`, `__pycache__`, build output, and similar directories) remain active. Configured `exclude_names` are additive. `exclude_paths` and repeatable command-line `--exclude` values are exact root-relative directory subtrees, not glob patterns. Excluded folders are never traversed, discovered, installed, counted as dependency consumers, or used in release compatibility calculations.
+
+For a one-command exclusion:
 
 ```bash
-python -m pip install -e .
+uv run pydevledger --root ~/code --exclude scratch scan
+```
 
-# Discover Python projects in Git worktrees.
-pydevledger --root ~/code scan
+## Commands
 
-# Compare them with the selected Python environment.
-pydevledger --root ~/code --python /path/to/.venv/bin/python status
+```bash
+# Discover Git-backed Python projects.
+uv run pydevledger --root ~/code scan
 
-# Show all local projects declaring a dependency on pydantic.
-pydevledger --root ~/code dependents pydantic
+# Compare projects with the selected environment.
+uv run pydevledger --root ~/code --python ~/venvs/dev/bin/python status
+
+# The root .venv is used when --python and VIRTUAL_ENV are absent.
+uv run pydevledger --root ~/code status
+
+# Show local consumers of a dependency.
+uv run pydevledger --root ~/code dependents pydantic
 
 # Check direct dependencies against PyPI.
-pydevledger --root ~/code --python /path/to/.venv/bin/python updates
+uv run pydevledger --root ~/code --python ~/venvs/dev/bin/python updates
 
-# Record the currently observed upstream releases as acknowledged.
-pydevledger --root ~/code updates --ack
+# Acknowledge observed upstream releases.
+uv run pydevledger --root ~/code updates --ack
 
-# Install every discovered project editable in one uv transaction.
-pydevledger --root ~/code --python /path/to/.venv/bin/python sync
+# Install all included projects editable in one uv transaction, then run uv pip check.
+uv run pydevledger --root ~/code --python ~/venvs/dev/bin/python sync
+
+# Print the deterministic uv command without changing the environment.
+uv run pydevledger --root ~/code --exclude archive sync --dry-run
 ```
 
-If `--python` is omitted, `pydevledger` uses `$VIRTUAL_ENV/bin/python` when available, otherwise the interpreter running `pydevledger`.
+Target Python resolution is: explicit `--python`, `$VIRTUAL_ENV`, `<root>/.venv`, then the interpreter running pydevledger. Read-only environment inspection uses `importlib.metadata` and `direct_url.json` so status can distinguish `MISSING`, `NON-LOCAL`, `WRONG-SOURCE`, `LOCAL-NONEDIT`, and `OK`.
 
-## Current MVP boundaries
+## Release reports and state
 
-- PyPI is the only release source.
-- Only PEP 621 `[project]` metadata is read.
-- Dependency groups / extras are not scanned yet.
-- `updates` checks declared direct dependencies, not the full resolved transitive graph.
-- Release compatibility currently means the declared version specifier; `Requires-Python`, platform markers, and lockfiles are future work.
-- Git metadata is used for project discovery but commit/dirty-state reporting is not yet persisted in the ledger.
+`updates` keeps separate `installed`, `latest compatible`, and `latest upstream` values, and lists every local consumer and its declared requirement. It reports releases but does not edit manifests or automatically upgrade environments.
+
+Observed releases remain backward-compatible in `<root>/.pydevledger/state.json`. Configuration is user-authored workspace policy in `.pydevledger.toml`; state is local observation data and is commonly ignored by Git.
+
+## Boundaries
+
+- PyPI is the only release source, and network responses are not required by the automated tests.
+- Only PEP 621 `[project]` metadata and direct dependencies are inspected.
+- uv is the only implemented package-manager backend; selection is explicit and has no fallback.
+- Dependency groups, extras, transitive resolution, lockfile parsing, automatic constraint edits, automatic upgrades, Git fetch/pull, and arbitrary exclusion globs are out of scope.
+- Ledgercore is not a runtime dependency; pydevledger remains independently bootstrappable.

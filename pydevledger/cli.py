@@ -1,29 +1,37 @@
 from __future__ import annotations
 
 import argparse
-import shutil
-import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
 from . import __version__
+from .config import WorkspaceConfig, load_config
 from .discovery import dependency_uses, discover
-from .environment import inspect_environment, resolve_python
+from .environment import classify_project_install, inspect_environment, resolve_python
+from .package_manager import get_package_manager
 from .releases import fetch_pypi_versions, newest_versions
 from .state import load_state, save_state
+from .types import Project
 
 
-def _projects(root: Path):
-    projects = discover(root)
+@dataclass(frozen=True, slots=True)
+class AppContext:
+    root: Path
+    config: WorkspaceConfig
+
+
+def _projects(context: AppContext) -> dict[str, Project]:
+    projects = discover(context.root, config=context.config.discovery)
     if not projects:
-        raise RuntimeError(f"No Git-backed Python projects found below {root}")
+        raise RuntimeError(f"No Git-backed Python projects found below {context.root}")
     return projects
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    projects = _projects(args.root)
+    projects = _projects(args.context)
     for project in sorted(projects.values(), key=lambda item: item.name.lower()):
         local = ", ".join(projects[key].name for key in sorted(project.local_dependencies))
         suffix = f"  local-deps=[{local}]" if local else ""
@@ -32,33 +40,26 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    projects = _projects(args.root)
-    python = resolve_python(args.python)
+    context = args.context
+    projects = _projects(context)
+    python = resolve_python(args.python, root=context.root)
     installed = inspect_environment(python)
 
     print(f"Python: {python}")
     print(f"{'PROJECT':<28} {'VERSION':<14} {'STATE':<16} SOURCE")
     for project in sorted(projects.values(), key=lambda item: item.name.lower()):
         dist = installed.get(project.key)
+        state = classify_project_install(project, dist)
         if dist is None:
-            print(f"{project.name:<28} {'-':<14} {'MISSING':<16} {project.path}")
+            print(f"{project.name:<28} {'-':<14} {state:<16} {project.path}")
             continue
-
-        if dist.source is None:
-            state = "NON-LOCAL"
-        elif dist.source != project.path:
-            state = "WRONG-SOURCE"
-        elif dist.editable:
-            state = "OK"
-        else:
-            state = "LOCAL-NONEDIT"
         source = str(dist.source) if dist.source else "index/unknown"
         print(f"{project.name:<28} {dist.version:<14} {state:<16} {source}")
     return 0
 
 
 def cmd_dependents(args: argparse.Namespace) -> int:
-    projects = _projects(args.root)
+    projects = _projects(args.context)
     uses = dependency_uses(projects)
     key = canonicalize_name(args.package)
     matches = uses.get(key, [])
@@ -73,11 +74,12 @@ def cmd_dependents(args: argparse.Namespace) -> int:
 
 
 def cmd_updates(args: argparse.Namespace) -> int:
-    projects = _projects(args.root)
+    context = args.context
+    projects = _projects(context)
     uses = dependency_uses(projects)
-    python = resolve_python(args.python)
+    python = resolve_python(args.python, root=context.root)
     installed = inspect_environment(python)
-    seen = load_state(args.root)
+    seen = load_state(context.root)
     next_seen = dict(seen)
 
     found = False
@@ -97,7 +99,8 @@ def cmd_updates(args: argparse.Namespace) -> int:
         if latest is None:
             continue
 
-        installed_version = installed.get(key).version if key in installed else None
+        distribution = installed.get(key)
+        installed_version = distribution.version if distribution is not None else None
         latest_text = str(latest)
         is_new = seen.get(key) != latest_text
         has_upgrade = installed_version is None or installed_version != latest_text
@@ -120,37 +123,19 @@ def cmd_updates(args: argparse.Namespace) -> int:
         next_seen[key] = latest_text
 
     if args.ack:
-        save_state(args.root, next_seen)
-        print(f"Acknowledged observed releases in {args.root / '.pydevledger' / 'state.json'}")
-
+        save_state(context.root, next_seen)
+        print(f"Acknowledged observed releases in {context.root / '.pydevledger' / 'state.json'}")
     if not found:
         print("No unseen dependency releases found." if not args.all else "No dependency releases found.")
     return 0
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
-    projects = _projects(args.root)
-    python = resolve_python(args.python)
-    uv = shutil.which("uv")
-    if uv is None:
-        raise RuntimeError("uv is required for sync but was not found on PATH")
-
-    command = [uv, "pip", "install", "--python", str(python), "--link-mode", "copy"]
-    for project in sorted(projects.values(), key=lambda item: item.name.lower()):
-        command.extend(["-e", str(project.path)])
-
-    print(" ".join(command))
-    if args.dry_run:
-        return 0
-
-    result = subprocess.run(command, check=False)
-    if result.returncode:
-        return result.returncode
-
-    return subprocess.run(
-        [uv, "pip", "check", "--python", str(python)],
-        check=False,
-    ).returncode
+    context = args.context
+    projects = _projects(context)
+    python = resolve_python(args.python, root=context.root)
+    manager = get_package_manager(context.config.package_manager)
+    return manager.sync(python, list(projects.values()), dry_run=args.dry_run)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -158,6 +143,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="workspace root")
     parser.add_argument("--python", type=Path, help="Python interpreter / venv to inspect")
+    parser.add_argument("--config", type=Path, help="workspace configuration file")
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="temporarily exclude a root-relative directory subtree",
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -177,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
     updates.add_argument("--include-prerelease", action="store_true")
     updates.set_defaults(func=cmd_updates)
 
-    sync = sub.add_parser("sync", help="install all discovered projects editable with uv")
+    sync = sub.add_parser("sync", help="install all discovered projects editable with the configured backend")
     sync.add_argument("--dry-run", action="store_true")
     sync.set_defaults(func=cmd_sync)
 
@@ -192,10 +185,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"root is not a directory: {args.root}")
 
     try:
+        args.context = AppContext(
+            root=args.root,
+            config=load_config(args.root, args.config, cli_exclude_paths=args.exclude),
+        )
         return int(args.func(args))
     except RuntimeError as exc:
         parser.error(str(exc))
-        return 2
 
 
 if __name__ == "__main__":

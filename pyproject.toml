@@ -12,6 +12,11 @@ dependencies = [
   "packaging>=24.2",
 ]
 
+[dependency-groups]
+dev = [
+  "pytest",
+]
+
 [project.scripts]
 pydevledger = "pydevledger.cli:main"
 

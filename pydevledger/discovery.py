@@ -2,23 +2,13 @@ from __future__ import annotations
 
 import os
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
+from .config import DiscoveryConfig, default_config
 from .types import DependencyUse, Project
-
-EXCLUDED_DIRS = {
-    ".git",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-    "solution",
-    "starting_code",
-}
 
 
 def _git_root(path: Path, boundary: Path) -> Path | None:
@@ -32,8 +22,30 @@ def _git_root(path: Path, boundary: Path) -> Path | None:
         current = current.parent
 
 
-def discover(root: Path) -> dict[str, Project]:
+def should_skip_directory(root: Path, directory: Path, *, config: DiscoveryConfig) -> bool:
+    name = directory.name
+    if name in config.exclude_names:
+        return True
+    if name.startswith(".") and not config.include_hidden:
+        return True
+    try:
+        relative = directory.resolve().relative_to(root.resolve())
+    except ValueError:
+        return True
+    relative_parts = PurePosixPath(relative.as_posix()).parts
+    return any(
+        relative_parts[: len(PurePosixPath(excluded).parts)] == PurePosixPath(excluded).parts
+        for excluded in config.exclude_paths
+    )
+
+
+def discover(
+    root: Path,
+    *,
+    config: DiscoveryConfig | None = None,
+) -> dict[str, Project]:
     root = root.resolve()
+    config = config or default_config().discovery
     projects: dict[str, Project] = {}
 
     for directory, directories, files in os.walk(root):
@@ -41,7 +53,7 @@ def discover(root: Path) -> dict[str, Project]:
         directories[:] = [
             name
             for name in directories
-            if name not in EXCLUDED_DIRS and not name.startswith(".")
+            if not should_skip_directory(root, current / name, config=config)
         ]
 
         if "pyproject.toml" not in files:
@@ -70,8 +82,11 @@ def discover(root: Path) -> dict[str, Project]:
                 f"Duplicate local project name {name!r}: {other.path} and {current}"
             )
 
+        raw_dependencies = project_metadata.get("dependencies", [])
+        if not isinstance(raw_dependencies, list):
+            raise RuntimeError(f"project.dependencies must be an array in {manifest}")
         requirements: list[Requirement] = []
-        for raw in project_metadata.get("dependencies", []):
+        for raw in raw_dependencies:
             try:
                 requirements.append(Requirement(str(raw)))
             except InvalidRequirement as exc:
