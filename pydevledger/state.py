@@ -16,7 +16,11 @@ def load_state(root: Path) -> dict[str, str]:
     except (OSError, json.JSONDecodeError):
         return {}
     seen = data.get("seen_releases", {})
-    return {str(key): str(value) for key, value in seen.items()} if isinstance(seen, dict) else {}
+    return (
+        {str(key): str(value) for key, value in seen.items()}
+        if isinstance(seen, dict)
+        else {}
+    )
 
 
 def save_state(root: Path, seen_releases: dict[str, str]) -> None:

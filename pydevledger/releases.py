@@ -9,11 +9,13 @@ from packaging.requirements import Requirement
 from packaging.version import InvalidVersion, Version
 
 
-def fetch_pypi_versions(name: str, *, include_prerelease: bool = False) -> list[Version]:
+def fetch_pypi_versions(
+    name: str, *, include_prerelease: bool = False
+) -> list[Version]:
     url = f"https://pypi.org/pypi/{quote(name)}/json"
     request = Request(url, headers={"User-Agent": "pydevledger/0 (MVP)"})
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310 - fixed PyPI host
+        with urlopen(request, timeout=10) as response:
             payload = json.load(response)
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Cannot query PyPI for {name}: {exc}") from exc
@@ -44,6 +46,8 @@ def newest_versions(
     compatible = [
         version
         for version in versions
-        if all(req.specifier.contains(version, prereleases=True) for req in requirements)
+        if all(
+            req.specifier.contains(version, prereleases=True) for req in requirements
+        )
     ]
     return (compatible[-1] if compatible else None), latest

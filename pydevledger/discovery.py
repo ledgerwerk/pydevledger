@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-from .config import DiscoveryConfig, default_config
+from .config import DiscoveryConfig, default_config, is_excluded_relative_path
 from .types import DependencyUse, Project
 
 
@@ -22,7 +22,9 @@ def _git_root(path: Path, boundary: Path) -> Path | None:
         current = current.parent
 
 
-def should_skip_directory(root: Path, directory: Path, *, config: DiscoveryConfig) -> bool:
+def should_skip_directory(
+    root: Path, directory: Path, *, config: DiscoveryConfig
+) -> bool:
     name = directory.name
     if name in config.exclude_names:
         return True
@@ -32,11 +34,8 @@ def should_skip_directory(root: Path, directory: Path, *, config: DiscoveryConfi
         relative = directory.resolve().relative_to(root.resolve())
     except ValueError:
         return True
-    relative_parts = PurePosixPath(relative.as_posix()).parts
-    return any(
-        relative_parts[: len(PurePosixPath(excluded).parts)] == PurePosixPath(excluded).parts
-        for excluded in config.exclude_paths
-    )
+    relative = PurePosixPath(relative.as_posix())
+    return is_excluded_relative_path(relative, config.exclude_paths)
 
 
 def discover(

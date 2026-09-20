@@ -6,7 +6,8 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 CONFIG_FILE = ".pydevledger.toml"
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2
+SUPPORTED_CONFIG_VERSIONS = frozenset({1, 2})
 
 DEFAULT_EXCLUDED_NAMES = frozenset(
     {
@@ -43,9 +44,15 @@ class DiscoveryConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SyncConfig:
+    exclude_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class WorkspaceConfig:
     package_manager: PackageManagerConfig = PackageManagerConfig()
     discovery: DiscoveryConfig = DiscoveryConfig()
+    sync: SyncConfig = SyncConfig()
     path: Path | None = None
 
 
@@ -63,7 +70,9 @@ def _require_table(value: object, name: str, path: Path) -> dict[str, object]:
     return value
 
 
-def _reject_unknown(table: dict[str, object], allowed: set[str], prefix: str, path: Path) -> None:
+def _reject_unknown(
+    table: dict[str, object], allowed: set[str], prefix: str, path: Path
+) -> None:
     for key in table:
         if key not in allowed:
             supported = ", ".join(sorted(allowed))
@@ -76,7 +85,10 @@ def _parse_exclude_names(value: object, path: Path) -> frozenset[str]:
     names: set[str] = set()
     for index, name in enumerate(value):
         if not name or "/" in name or "\\" in name:
-            raise _error(path, f"discovery.exclude_names[{index}] must be a non-empty directory basename")
+            raise _error(
+                path,
+                f"discovery.exclude_names[{index}] must be a non-empty directory basename",
+            )
         names.add(name)
     return frozenset(names)
 
@@ -87,7 +99,11 @@ def normalize_exclude_path(value: str, *, field: str = "exclude_paths") -> str:
     if "\\" in value:
         raise ValueError(f"{field} must use '/' as the path separator: {value!r}")
     candidate = PurePosixPath(value)
-    if candidate.is_absolute() or ".." in candidate.parts or candidate == PurePosixPath("."):
+    if (
+        candidate.is_absolute()
+        or ".." in candidate.parts
+        or candidate == PurePosixPath(".")
+    ):
         raise ValueError(f"{field} must be a relative path without '..': {value!r}")
     normalized = "/".join(part for part in candidate.parts if part not in ("", "."))
     if not normalized:
@@ -95,7 +111,20 @@ def normalize_exclude_path(value: str, *, field: str = "exclude_paths") -> str:
     return normalized
 
 
-def _parse_exclude_paths(value: object, path: Path, *, field: str = "discovery.exclude_paths") -> tuple[str, ...]:
+def is_excluded_relative_path(
+    relative: PurePosixPath, excluded_paths: tuple[str, ...]
+) -> bool:
+    relative_parts = relative.parts
+    return any(
+        relative_parts[: len(PurePosixPath(excluded).parts)]
+        == PurePosixPath(excluded).parts
+        for excluded in excluded_paths
+    )
+
+
+def _parse_exclude_paths(
+    value: object, path: Path, *, field: str = "discovery.exclude_paths"
+) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise _error(path, f"{field} must be an array of strings")
     normalized: list[str] = []
@@ -108,14 +137,23 @@ def _parse_exclude_paths(value: object, path: Path, *, field: str = "discovery.e
 
 
 def _parse_config(path: Path, data: dict[str, object]) -> WorkspaceConfig:
-    _reject_unknown(data, {"schema_version", "package_manager", "discovery"}, "top-level", path)
+    _reject_unknown(
+        data,
+        {"schema_version", "package_manager", "discovery", "sync"},
+        "top-level",
+        path,
+    )
     if "schema_version" not in data:
-        raise _error(path, "Missing schema_version; expected 1")
+        raise _error(path, "Missing schema_version; expected 1 or 2")
     version = data["schema_version"]
     if not isinstance(version, int) or isinstance(version, bool):
         raise _error(path, "schema_version must be an integer")
-    if version != CONFIG_VERSION:
-        raise _error(path, f"Unsupported pydevledger config schema_version {version}; expected {CONFIG_VERSION}")
+    if version not in SUPPORTED_CONFIG_VERSIONS:
+        supported = ", ".join(str(item) for item in sorted(SUPPORTED_CONFIG_VERSIONS))
+        raise _error(
+            path,
+            f"Unsupported pydevledger config schema_version {version}; expected one of {supported}",
+        )
 
     package_manager = PackageManagerConfig()
     raw_package_manager = data.get("package_manager")
@@ -143,7 +181,12 @@ def _parse_config(path: Path, data: dict[str, object]) -> WorkspaceConfig:
     raw_discovery = data.get("discovery")
     if raw_discovery is not None:
         discovery_table = _require_table(raw_discovery, "discovery", path)
-        _reject_unknown(discovery_table, {"exclude_names", "exclude_paths", "include_hidden"}, "[discovery]", path)
+        _reject_unknown(
+            discovery_table,
+            {"exclude_names", "exclude_paths", "include_hidden"},
+            "[discovery]",
+            path,
+        )
         names = frozenset()
         if "exclude_names" in discovery_table:
             names = _parse_exclude_names(discovery_table["exclude_names"], path)
@@ -159,7 +202,26 @@ def _parse_config(path: Path, data: dict[str, object]) -> WorkspaceConfig:
             include_hidden=include_hidden,
         )
 
-    return WorkspaceConfig(package_manager=package_manager, discovery=discovery, path=path)
+    sync = SyncConfig()
+    raw_sync = data.get("sync")
+    if raw_sync is not None:
+        if version == 1:
+            raise _error(path, "[sync] requires schema_version = 2")
+        sync_table = _require_table(raw_sync, "sync", path)
+        _reject_unknown(sync_table, {"exclude_paths"}, "[sync]", path)
+        paths = ()
+        if "exclude_paths" in sync_table:
+            paths = _parse_exclude_paths(
+                sync_table["exclude_paths"], path, field="sync.exclude_paths"
+            )
+        sync = SyncConfig(exclude_paths=paths)
+
+    return WorkspaceConfig(
+        package_manager=package_manager,
+        discovery=discovery,
+        sync=sync,
+        path=path,
+    )
 
 
 def load_config(
@@ -169,7 +231,9 @@ def load_config(
     cli_exclude_paths: list[str] | None = None,
 ) -> WorkspaceConfig:
     root = root.expanduser().resolve()
-    path = explicit.expanduser().resolve() if explicit is not None else root / CONFIG_FILE
+    path = (
+        explicit.expanduser().resolve() if explicit is not None else root / CONFIG_FILE
+    )
     if explicit is None and not path.exists():
         config = default_config()
     else:
@@ -186,7 +250,9 @@ def load_config(
         additions: list[str] = []
         for index, item in enumerate(cli_exclude_paths):
             try:
-                additions.append(normalize_exclude_path(item, field=f"--exclude[{index}]"))
+                additions.append(
+                    normalize_exclude_path(item, field=f"--exclude[{index}]")
+                )
             except ValueError as exc:
                 raise RuntimeError(str(exc)) from exc
         discovery = config.discovery
@@ -194,9 +260,12 @@ def load_config(
             package_manager=config.package_manager,
             discovery=DiscoveryConfig(
                 exclude_names=discovery.exclude_names,
-                exclude_paths=tuple(dict.fromkeys((*discovery.exclude_paths, *additions))),
+                exclude_paths=tuple(
+                    dict.fromkeys((*discovery.exclude_paths, *additions))
+                ),
                 include_hidden=discovery.include_hidden,
             ),
+            sync=config.sync,
             path=config.path,
         )
     return config

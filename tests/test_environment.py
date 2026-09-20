@@ -17,7 +17,9 @@ def make_python(path: Path) -> Path:
     return path
 
 
-def test_resolution_prefers_explicit_then_active_then_root_venv(tmp_path: Path, monkeypatch) -> None:
+def test_resolution_prefers_explicit_then_active_then_root_venv(
+    tmp_path: Path, monkeypatch
+) -> None:
     explicit = make_python(tmp_path / "explicit")
     active = make_python(tmp_path / "active" / "bin" / "python")
     root_python = make_python(tmp_path / ".venv" / "bin" / "python")
@@ -38,28 +40,50 @@ def test_venv_python_and_missing_explicit(tmp_path: Path) -> None:
 
 
 def test_classify_provenance_states(tmp_path: Path) -> None:
-    project = Project(name="demo", key="demo", path=tmp_path / "demo", git_root=tmp_path)
+    project = Project(
+        name="demo", key="demo", path=tmp_path / "demo", git_root=tmp_path
+    )
     expected = project.path.resolve()
     assert classify_project_install(project, None) == "MISSING"
-    assert classify_project_install(
-        project,
-        InstalledDistribution("demo", "demo", "1.0", source=None),
-    ) == "NON-LOCAL"
-    assert classify_project_install(
-        project,
-        InstalledDistribution("demo", "demo", "1.0", editable=True, source=tmp_path / "other"),
-    ) == "WRONG-SOURCE"
-    assert classify_project_install(
-        project,
-        InstalledDistribution("demo", "demo", "1.0", editable=False, source=expected),
-    ) == "LOCAL-NONEDIT"
-    assert classify_project_install(
-        project,
-        InstalledDistribution("demo", "demo", "1.0", editable=True, source=expected),
-    ) == "OK"
+    assert (
+        classify_project_install(
+            project,
+            InstalledDistribution("demo", "demo", "1.0", source=None),
+        )
+        == "NON-LOCAL"
+    )
+    assert (
+        classify_project_install(
+            project,
+            InstalledDistribution(
+                "demo", "demo", "1.0", editable=True, source=tmp_path / "other"
+            ),
+        )
+        == "WRONG-SOURCE"
+    )
+    assert (
+        classify_project_install(
+            project,
+            InstalledDistribution(
+                "demo", "demo", "1.0", editable=False, source=expected
+            ),
+        )
+        == "LOCAL-NONEDIT"
+    )
+    assert (
+        classify_project_install(
+            project,
+            InstalledDistribution(
+                "demo", "demo", "1.0", editable=True, source=expected
+            ),
+        )
+        == "OK"
+    )
 
 
-def test_inspection_parses_direct_url_and_normalizes_names(tmp_path: Path, monkeypatch) -> None:
+def test_inspection_parses_direct_url_and_normalizes_names(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "source dir"
     payload = [
         {
@@ -74,7 +98,9 @@ def test_inspection_parses_direct_url_and_normalizes_names(tmp_path: Path, monke
     ]
     monkeypatch.setattr(
         "pydevledger.environment.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr=""),
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout=json.dumps(payload), stderr=""
+        ),
     )
 
     installed = inspect_environment(make_python(tmp_path / "python"))

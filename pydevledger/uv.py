@@ -42,7 +42,9 @@ class UvPackageManager:
     def render_command(command: list[str]) -> str:
         return " ".join(command)
 
-    def sync(self, python: Path, projects: list[Project], *, dry_run: bool = False) -> int:
+    def sync(
+        self, python: Path, projects: list[Project], *, dry_run: bool = False
+    ) -> int:
         command = self.install_command(python, projects)
         print(self.render_command(command))
         if dry_run:
@@ -53,4 +55,6 @@ class UvPackageManager:
         return self.check(python)
 
     def check(self, python: Path) -> int:
-        return subprocess.run(self.check_command(python), check=False, shell=False).returncode
+        return subprocess.run(
+            self.check_command(python), check=False, shell=False
+        ).returncode

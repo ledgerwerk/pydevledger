@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydevledger.config import DiscoveryConfig, DEFAULT_EXCLUDED_NAMES
+from pydevledger.config import DEFAULT_EXCLUDED_NAMES, DiscoveryConfig
 from pydevledger.discovery import dependency_uses, discover
 
 
@@ -27,7 +27,9 @@ def test_discover_local_dependency(tmp_path: Path) -> None:
     assert {use.project.name for use in uses["tool-b"]} == {"tool-a"}
 
 
-def test_exclusions_prune_names_and_paths_without_prefix_overmatch(tmp_path: Path) -> None:
+def test_exclusions_prune_names_and_paths_without_prefix_overmatch(
+    tmp_path: Path,
+) -> None:
     write_project(tmp_path / "generated" / "internal", "generated-project")
     write_project(tmp_path / "clients" / "acme" / "old", "old-project")
     write_project(tmp_path / "clients" / "acme" / "old-new", "new-project")

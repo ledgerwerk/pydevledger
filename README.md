@@ -21,7 +21,7 @@ The package keeps a flat layout (there is no `src/` directory) and uses dynamic 
 Configuration is optional. Without an explicit `--config`, pydevledger reads only `<root>/.pydevledger.toml` when that file exists. It never searches above `--root`.
 
 ```toml
-schema_version = 1
+schema_version = 2
 
 [package_manager]
 system = "uv"
@@ -36,11 +36,19 @@ exclude_paths = [
   "clients/acme/retired-service",
 ]
 include_hidden = false
+
+[sync]
+# Still discovered and tracked, but omitted from sync.
+exclude_paths = ["g2lex-data"]
 ```
 
 The selected package-management system is workspace policy. With `system = "uv"`, environment mutation and verification use only uv; pydevledger does not silently fall back to pip, Poetry, or another manager. The `uv pip ...` form is a uv command, not a direct invocation of pip.
 
-Built-in exclusions (`.git`, `.venv`, `__pycache__`, build output, and similar directories) remain active. Configured `exclude_names` are additive. `exclude_paths` and repeatable command-line `--exclude` values are exact root-relative directory subtrees, not glob patterns. Excluded folders are never traversed, discovered, installed, counted as dependency consumers, or used in release compatibility calculations.
+Built-in exclusions (`.git`, `.venv`, `__pycache__`, build output, and similar directories) remain active. Configured `exclude_names` are additive. `discovery.exclude_paths` and repeatable command-line `--exclude` values are exact root-relative directory subtrees, not glob patterns; they make a subtree invisible to discovery and all subsequent analysis.
+
+`sync.exclude_paths` is a separate policy. Its paths are still discovered, listed by `scan`, included in local dependency and release analysis, and available to `status`, but their checkouts are omitted from the editable operands passed to `uv pip install`. In other words: `discovery.exclude_paths` means "do not model this checkout"; `sync.exclude_paths` means "model it, but do not install the local checkout."
+
+This is useful when a checked-out project cannot be installed into a selected or global/base Python environment (for example, because a compatible package version is unavailable) while the project should remain visible to workspace tracking. If an included project declares a dependency on a sync-excluded local project, uv may still try to resolve that package from configured indexes or the existing environment; pydevledger warns about this and does not rewrite dependencies or add `--no-deps`.
 
 For a one-command exclusion:
 

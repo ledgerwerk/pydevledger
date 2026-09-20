@@ -10,7 +10,7 @@ from packaging.utils import canonicalize_name
 
 from .types import InstalledDistribution, Project
 
-_INSPECT_SCRIPT = r'''
+_INSPECT_SCRIPT = r"""
 import importlib.metadata as md
 import json
 
@@ -32,7 +32,7 @@ for dist in md.distributions():
         "direct_url": direct,
     })
 print(json.dumps(rows))
-'''
+"""
 
 
 def venv_python(path: Path) -> Path | None:
@@ -50,7 +50,9 @@ def resolve_python(explicit: Path | None = None, *, root: Path | None = None) ->
     if explicit is not None:
         candidate = venv_python(explicit)
         if candidate is None:
-            raise RuntimeError(f"Python interpreter does not exist: {explicit.expanduser()}")
+            raise RuntimeError(
+                f"Python interpreter does not exist: {explicit.expanduser()}"
+            )
         return candidate
 
     active = os.environ.get("VIRTUAL_ENV")
@@ -88,7 +90,9 @@ def inspect_environment(python: Path) -> dict[str, InstalledDistribution]:
     try:
         rows = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Cannot inspect environment with {python}: invalid JSON") from exc
+        raise RuntimeError(
+            f"Cannot inspect environment with {python}: invalid JSON"
+        ) from exc
 
     installed: dict[str, InstalledDistribution] = {}
     for row in rows:

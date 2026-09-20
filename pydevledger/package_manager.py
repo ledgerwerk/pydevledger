@@ -13,11 +13,11 @@ SUPPORTED_PACKAGE_MANAGERS = frozenset({"uv"})
 class PackageManager(Protocol):
     name: str
 
-    def sync(self, python: Path, projects: list[Project], *, dry_run: bool = False) -> int:
-        ...
+    def sync(
+        self, python: Path, projects: list[Project], *, dry_run: bool = False
+    ) -> int: ...
 
-    def check(self, python: Path) -> int:
-        ...
+    def check(self, python: Path) -> int: ...
 
 
 def get_package_manager(config: PackageManagerConfig) -> PackageManager:
