@@ -36,6 +36,56 @@ def test_install_command_is_deterministic_and_uses_link_mode(
     ]
 
 
+def test_sync_merges_configured_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setattr("pydevledger.uv.shutil.which", lambda name: "/bin/uv")
+    monkeypatch.setenv("INHERITED", "yes")
+    monkeypatch.setenv("CFLAGS", "host")
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("pydevledger.uv.subprocess.run", run)
+    manager = UvPackageManager(
+        UvConfig(environment=(("CFLAGS", "termux-flags"), ("MATHLIB", "m")))
+    )
+
+    assert manager.sync(Path("/python"), [project(tmp_path, "a")]) == 0
+    output = capsys.readouterr().out
+    assert "termux-flags" not in output
+    assert "MATHLIB" not in output
+
+    install_env = calls[0][1]["env"]
+    check_env = calls[1][1]["env"]
+    assert isinstance(install_env, dict)
+    assert install_env["INHERITED"] == "yes"
+    assert install_env["CFLAGS"] == "termux-flags"
+    assert install_env["MATHLIB"] == "m"
+    assert check_env == install_env
+    assert all(call[1]["shell"] is False for call in calls)
+
+
+def test_no_environment_overrides_pass_none_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pydevledger.uv.shutil.which", lambda name: "/bin/uv")
+    envs: list[object] = []
+
+    def run(command, **kwargs):
+        envs.append(kwargs["env"])
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("pydevledger.uv.subprocess.run", run)
+    assert (
+        UvPackageManager(UvConfig()).sync(Path("/python"), [project(tmp_path, "a")])
+        == 0
+    )
+    assert envs == [None, None]
+
+
 def test_dry_run_does_not_execute(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("pydevledger.uv.shutil.which", lambda name: "/bin/uv")
     run = lambda *args, **kwargs: pytest.fail(

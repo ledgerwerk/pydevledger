@@ -63,7 +63,7 @@ def test_valid_uv_link_modes(tmp_path: Path, link_mode: str) -> None:
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("schema_version = 3", "Unsupported pydevledger config schema_version"),
+        ("schema_version = 4", "Unsupported pydevledger config schema_version"),
         ('schema_version = 1\n[package_manager]\nsystem = "poetry"', "poetry"),
         ('schema_version = 1\n[package_manager.uv]\nlink_mode = "bad"', "uv.link_mode"),
         ("schema_version = 1\n[package_manager.uv]\nother = true", "Unknown key"),
@@ -149,4 +149,53 @@ def test_sync_exclude_paths_must_be_string_array(tmp_path: Path, text: str) -> N
 def test_unknown_sync_key_is_actionable(tmp_path: Path) -> None:
     write_config(tmp_path, "schema_version = 2\n[sync]\nexlude_paths = ['x']\n")
     with pytest.raises(RuntimeError, match="Unknown key.*exlude_paths"):
+        load_config(tmp_path)
+
+
+def test_schema_v3_parses_uv_environment(tmp_path: Path) -> None:
+    write_config(
+        tmp_path,
+        """schema_version = 3
+
+[package_manager.uv.environment]
+LDFLAGS = "-lm"
+CFLAGS = "native-flags"
+""",
+    )
+    assert load_config(tmp_path).package_manager.uv.environment == (
+        ("CFLAGS", "native-flags"),
+        ("LDFLAGS", "-lm"),
+    )
+
+
+def test_uv_environment_requires_schema_v3(tmp_path: Path) -> None:
+    write_config(
+        tmp_path,
+        """schema_version = 2
+
+[package_manager.uv.environment]
+CFLAGS = "native-flags"
+""",
+    )
+    with pytest.raises(RuntimeError, match="schema_version = 3"):
+        load_config(tmp_path)
+
+
+@pytest.mark.parametrize("value", ["CFLAGS = 123", "BROKEN = true"])
+def test_uv_environment_values_must_be_strings(tmp_path: Path, value: str) -> None:
+    write_config(
+        tmp_path,
+        f"schema_version = 3\n[package_manager.uv.environment]\n{value}\n",
+    )
+    with pytest.raises(RuntimeError, match="must be a string"):
+        load_config(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["", "BAD=NAME"])
+def test_uv_environment_names_must_be_valid(tmp_path: Path, name: str) -> None:
+    write_config(
+        tmp_path,
+        f'schema_version = 3\n[package_manager.uv.environment]\n"{name}" = "value"\n',
+    )
+    with pytest.raises(RuntimeError, match="environment"):
         load_config(tmp_path)

@@ -22,7 +22,13 @@ def test_unsupported_backend_has_no_fallback() -> None:
 
 def test_uv_backend_retains_configured_link_mode() -> None:
     manager = get_package_manager(
-        PackageManagerConfig(uv=UvConfig(link_mode="hardlink"))
+        PackageManagerConfig(
+            uv=UvConfig(
+                link_mode="hardlink",
+                environment=(("MATHLIB", "m"),),
+            )
+        )
     )
     assert isinstance(manager, UvPackageManager)
     assert manager.config.link_mode == "hardlink"
+    assert manager.config.environment == (("MATHLIB", "m"),)

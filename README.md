@@ -21,13 +21,17 @@ The package keeps a flat layout (there is no `src/` directory) and uses dynamic 
 Configuration is optional. Without an explicit `--config`, pydevledger reads only `<root>/.pydevledger.toml` when that file exists. It never searches above `--root`.
 
 ```toml
-schema_version = 2
-
+schema_version = 3
 [package_manager]
 system = "uv"
 
 [package_manager.uv]
 link_mode = "copy"
+
+[package_manager.uv.environment]
+# Optional literal environment overrides inherited by uv and its build subprocesses.
+# Useful for platform-specific native builds.
+# CFLAGS = "..."
 
 [discovery]
 exclude_names = [".tox", "generated"]
@@ -55,6 +59,18 @@ For a one-command exclusion:
 ```bash
 uv run pydevledger --root ~/code --exclude scratch scan
 ```
+
+## Termux / Android native builds
+
+For Termux/Android, prefer the packaged NumPy build when its version satisfies the local projects:
+
+1. Install or inspect it with `pkg install python-numpy` and `python -c 'import numpy; print(numpy.__version__)'`.
+2. Use `pydevledger dependents numpy` to inspect direct requirements before diagnosing resolution.
+3. If a source build is required, validate the compiler/API behavior with a minimal C `<complex.h>` probe first.
+4. Configure only proven, literal flags under `[package_manager.uv.environment]`. Values are inherited by uv and its build subprocesses; they are not shell fragments.
+5. Do not blindly copy a minimum-SDK override from another device; it may make binaries depend on unavailable Android APIs.
+
+pydevledger does not claim to make arbitrary PyPI source distributions Android-compatible. It only gives uv the backend environment selected in workspace policy. It does not automatically enable `--no-build-isolation`, rewrite dependency metadata, add `--no-deps`, install packages, or fall back from uv.
 
 ## Commands
 

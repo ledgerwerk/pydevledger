@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,6 +14,13 @@ class UvPackageManager:
 
     def __init__(self, config: UvConfig) -> None:
         self.config = config
+
+    def _environment(self) -> dict[str, str] | None:
+        if not self.config.environment:
+            return None
+        environment = os.environ.copy()
+        environment.update(dict(self.config.environment))
+        return environment
 
     def _executable(self) -> str:
         executable = shutil.which("uv")
@@ -49,12 +57,20 @@ class UvPackageManager:
         print(self.render_command(command))
         if dry_run:
             return 0
-        result = subprocess.run(command, check=False, shell=False)
+        result = subprocess.run(
+            command,
+            check=False,
+            shell=False,
+            env=self._environment(),
+        )
         if result.returncode:
             return result.returncode
         return self.check(python)
 
     def check(self, python: Path) -> int:
         return subprocess.run(
-            self.check_command(python), check=False, shell=False
+            self.check_command(python),
+            check=False,
+            shell=False,
+            env=self._environment(),
         ).returncode

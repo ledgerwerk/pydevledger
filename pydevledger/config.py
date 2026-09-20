@@ -6,9 +6,8 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 CONFIG_FILE = ".pydevledger.toml"
-CONFIG_VERSION = 2
-SUPPORTED_CONFIG_VERSIONS = frozenset({1, 2})
-
+CONFIG_VERSION = 3
+SUPPORTED_CONFIG_VERSIONS = frozenset({1, 2, 3})
 DEFAULT_EXCLUDED_NAMES = frozenset(
     {
         ".git",
@@ -28,6 +27,7 @@ UvLinkMode = Literal["clone", "copy", "hardlink", "symlink"]
 @dataclass(frozen=True, slots=True)
 class UvConfig:
     link_mode: UvLinkMode = "copy"
+    environment: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +93,27 @@ def _parse_exclude_names(value: object, path: Path) -> frozenset[str]:
     return frozenset(names)
 
 
+def _parse_environment(
+    value: object,
+    path: Path,
+    *,
+    field: str,
+) -> tuple[tuple[str, str], ...]:
+    table = _require_table(value, field, path)
+    parsed: list[tuple[str, str]] = []
+    for key, raw_value in table.items():
+        if not isinstance(key, str) or not key:
+            raise _error(path, f"{field} keys must be non-empty strings")
+        if "=" in key or "\x00" in key:
+            raise _error(path, f"Invalid environment variable name {key!r}")
+        if not isinstance(raw_value, str):
+            raise _error(path, f"{field}.{key} must be a string")
+        if "\x00" in raw_value:
+            raise _error(path, f"{field}.{key} must not contain NUL")
+        parsed.append((key, raw_value))
+    return tuple(sorted(parsed))
+
+
 def normalize_exclude_path(value: str, *, field: str = "exclude_paths") -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must contain non-empty relative paths")
@@ -144,7 +165,7 @@ def _parse_config(path: Path, data: dict[str, object]) -> WorkspaceConfig:
         path,
     )
     if "schema_version" not in data:
-        raise _error(path, "Missing schema_version; expected 1 or 2")
+        raise _error(path, "Missing schema_version; expected 1, 2, or 3")
     version = data["schema_version"]
     if not isinstance(version, int) or isinstance(version, bool):
         raise _error(path, "schema_version must be an integer")
@@ -167,14 +188,31 @@ def _parse_config(path: Path, data: dict[str, object]) -> WorkspaceConfig:
             raise _error(path, f"Unsupported package manager {system!r}; supported: uv")
         raw_uv = package_table.get("uv", {})
         uv_table = _require_table(raw_uv, "package_manager.uv", path)
-        _reject_unknown(uv_table, {"link_mode"}, "[package_manager.uv]", path)
+        _reject_unknown(
+            uv_table, {"link_mode", "environment"}, "[package_manager.uv]", path
+        )
         link_mode = uv_table.get("link_mode", "copy")
         if not isinstance(link_mode, str) or link_mode not in UV_LINK_MODES:
             choices = ", ".join(sorted(UV_LINK_MODES))
             raise _error(path, f"uv.link_mode must be one of {choices}")
+        environment = ()
+        if "environment" in uv_table:
+            if version < 3:
+                raise _error(
+                    path,
+                    "[package_manager.uv.environment] requires schema_version = 3",
+                )
+            environment = _parse_environment(
+                uv_table["environment"],
+                path,
+                field="package_manager.uv.environment",
+            )
         package_manager = PackageManagerConfig(
             system=system,
-            uv=UvConfig(link_mode=cast(UvLinkMode, link_mode)),
+            uv=UvConfig(
+                link_mode=cast(UvLinkMode, link_mode),
+                environment=environment,
+            ),
         )
 
     discovery = DiscoveryConfig()
